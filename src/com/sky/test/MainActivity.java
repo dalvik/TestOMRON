@@ -145,26 +145,40 @@ public class MainActivity extends Activity {
 		@Override
 		public void run() {
 			try {
-				Method listener = BluetoothAdapter.class.getMethod("listenUsingInsecureRfcommWithServiceRecord",String.class, UUID.class);
-				bluetoothServerSocket = (BluetoothServerSocket)listener.invoke(bluetoothAdapter, bluetoothAdapter.getName(), SPP_UUID);
+				bluetoothServerSocket = bluetoothAdapter.listenUsingRfcommWithServiceRecord("OMRON", SPP_UUID);
+				//Method listener = BluetoothAdapter.class.getMethod("listenUsingInsecureRfcommWithServiceRecord",String.class, UUID.class);
+				//bluetoothServerSocket = (BluetoothServerSocket)listener.invoke(bluetoothAdapter, bluetoothAdapter.getName(), SPP_UUID);
+				InputStream is = null;
 				while(flag) {
+					Log.d(TAG, "### wait for connect.");
+					sb.append("### wait for connect\n");
+					handler.sendEmptyMessage(update_info);
 					bluetoothRecvSocket = bluetoothServerSocket.accept();
-					InputStream is = bluetoothRecvSocket.getInputStream();
+					Log.d(TAG, "### connected");
+					sb.append("### connected\n");
+					handler.sendEmptyMessage(update_info);
+					is = bluetoothRecvSocket.getInputStream();
 					int recvLength = is.read(recvBufer);
-					if("READY".equalsIgnoreCase(new String(recvBufer, 0, recvLength))) {
+					String re = new String(recvBufer, 0, recvLength);
+					if("READY".equalsIgnoreCase(re)) {
+						Log.d(TAG, "### rece from device = " + re);
+						sb.append("### rece from device = " + re + "\n");
+						handler.sendEmptyMessage(update_info);
 						flag = false;
 					}
-					int i = 0;
-					byte[] sendCmd = new byte[]{0x47,0x4d,0x44,0,(byte)(i>>8),(byte)i,(byte)((i>>8)^i)};
-					OutputStream os = bluetoothRecvSocket.getOutputStream();
-					os.write(sendCmd);
-					Thread.sleep(500);
-					int rl = -1;
-					while((rl = is.read(recvBufer)) != -1) {
-						Log.d(TAG, new String(recvBufer, 0, rl));
-					}
 				}
-				
+				int i = 0;
+				byte[] sendCmd = new byte[]{0x47,0x4d,0x44,0,(byte)(i>>8),(byte)i,(byte)((i>>8)^i)};
+				OutputStream os = bluetoothRecvSocket.getOutputStream();
+				os.write(sendCmd);
+				Thread.sleep(500);
+				int rl = -1;
+				while((rl = is.read(recvBufer)) != -1) {
+					String recv = new String(recvBufer, 0, rl);
+					sb.append("### " + recv +  "\n");
+					handler.sendEmptyMessage(update_info);
+					Log.d(TAG, recv);
+				}
 			} catch (Exception e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -261,11 +275,11 @@ public class MainActivity extends Activity {
 				Thread.sleep(500);
 				readLength = is.read(recv);
 				if(recv[0] == 'O' && recv[1] == 'K') {
-					sb.append("### 配对成功！ " + new String(recv,0, readLength));
+					sb.append("### 配对成功！ " + new String(recv,0, readLength)+"\n");
 					handler.sendEmptyMessage(update_info);
-					Log.d(TAG, "### 配对成功！");
+					Log.d(TAG, "### 配对成功！\n");
 					// TODO
-					ClsUtils.printAllInform(device.getClass());
+					//ClsUtils.printAllInform(device.getClass());
 					new Thread(new RecvDataTask()).start();
 				}else {
 					sb.append("### 配对失败！ ");
