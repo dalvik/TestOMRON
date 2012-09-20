@@ -2,6 +2,7 @@ package com.sky.test;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.UUID;
@@ -9,6 +10,7 @@ import java.util.UUID;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothServerSocket;
 import android.bluetooth.BluetoothSocket;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -46,7 +48,8 @@ public class MainActivity extends Activity {
 		public void handleMessage(android.os.Message msg) {
 			switch (msg.what) {
 			case unpair_msg:
-				new CheckOMRONTask().execute();
+				//new Thread(new CheckOMRONTask()).start();
+				new CheckOMRONTask().execute("");
 				break;
 			case update_info:
 				textView.setText(sb.toString());
@@ -73,6 +76,7 @@ public class MainActivity extends Activity {
 		intentFilter.addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED);
 		intentFilter.addAction(BluetoothAdapter.ACTION_SCAN_MODE_CHANGED);
 		intentFilter.addAction(BluetoothAdapter.ACTION_STATE_CHANGED);
+		intentFilter.addAction("android.bluetooth.device.action.PAIRING_REQUEST");
 		registerReceiver(broadcastReceiver, intentFilter);
 		handler.post(DiscoveryTask);
 		// new CheckOMRONTask().execute("");
@@ -123,6 +127,80 @@ public class MainActivity extends Activity {
 		}
 
 	}
+	
+	private class RecvDataTask implements Runnable  {
+			
+		private BluetoothServerSocket bluetoothServerSocket = null;
+				
+		private BluetoothSocket bluetoothRecvSocket = null;
+		
+		private byte[] recvBufer = new byte[1024];
+		
+		private boolean flag = true;
+		
+		public RecvDataTask() {
+			
+		}
+		
+		@Override
+		public void run() {
+			try {
+				Method listener = BluetoothAdapter.class.getMethod("listenUsingInsecureRfcommWithServiceRecord",String.class, UUID.class);
+				bluetoothServerSocket = (BluetoothServerSocket)listener.invoke(bluetoothAdapter, bluetoothAdapter.getName(), SPP_UUID);
+				while(flag) {
+					bluetoothRecvSocket = bluetoothServerSocket.accept();
+					InputStream is = bluetoothRecvSocket.getInputStream();
+					int recvLength = is.read(recvBufer);
+					if("READY".equalsIgnoreCase(new String(recvBufer, 0, recvLength))) {
+						flag = false;
+					}
+					int i = 0;
+					byte[] sendCmd = new byte[]{0x47,0x4d,0x44,0,(byte)(i>>8),(byte)i,(byte)((i>>8)^i)};
+					OutputStream os = bluetoothRecvSocket.getOutputStream();
+					os.write(sendCmd);
+					Thread.sleep(500);
+					int rl = -1;
+					while((rl = is.read(recvBufer)) != -1) {
+						Log.d(TAG, new String(recvBufer, 0, rl));
+					}
+				}
+				
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			} 
+		}
+	}
+		
+/*	private class CheckOMRONTask implements Runnable  {
+		
+		public CheckOMRONTask() {
+			
+		}
+		
+		@Override
+		public void run() {
+			unpair(device);
+			sb.append("### unpair success!" + "\n");
+			handler.sendEmptyMessage(update_info);
+			try {
+				ClsUtils.setPin(device.getClass(), device, "1234");
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			boolean res = pair(device);
+			Log.d(TAG, "####  pair result = " + res);
+			if (res) {
+				sb.append("### pair success!" + "\n");
+				handler.sendEmptyMessage(update_info);
+				connect();
+			} else {
+				sb.append("### sorry! pair fail! please try again!" + "\n");
+				handler.sendEmptyMessage(update_info);
+			}
+		}
+	}*/
 
 	public boolean pair(BluetoothDevice remoteDevice) {
 		if (remoteDevice.getBondState() == BluetoothDevice.BOND_NONE) {
@@ -169,10 +247,33 @@ public class MainActivity extends Activity {
 			client = BluetoothDevice.class.getMethod("createRfcommSocketToServiceRecord",UUID.class);//createRfcommSocketToServiceRecord
 			bluetoothSocket = (BluetoothSocket)client.invoke(device, SPP_UUID);
 			bluetoothSocket.connect();
-			byte[] recv = new byte[5];
+			byte[] recv = new byte[100];
 			InputStream is = bluetoothSocket.getInputStream();
 			int readLength = is.read(recv);
-			System.out.println("connect result =" +  new String(recv,0,readLength));
+			String recvStr = new String(recv,0,readLength);
+			sb.append("### " + device.getName() + " "  + recvStr + "\n");
+			handler.sendEmptyMessage(update_info);
+			if("READY".equalsIgnoreCase(recvStr)) {
+				byte[] sendCmd = new byte[]{0x54,0x4f,0x4b,(byte)0xff,(byte)0xff};
+				OutputStream os = bluetoothSocket.getOutputStream();
+				os.write(sendCmd);
+				os.flush();
+				Thread.sleep(500);
+				readLength = is.read(recv);
+				if(recv[0] == 'O' && recv[1] == 'K') {
+					sb.append("### 配对成功！ " + new String(recv,0, readLength));
+					handler.sendEmptyMessage(update_info);
+					Log.d(TAG, "### 配对成功！");
+					// TODO
+					ClsUtils.printAllInform(device.getClass());
+					new Thread(new RecvDataTask()).start();
+				}else {
+					sb.append("### 配对失败！ ");
+					handler.sendEmptyMessage(update_info);
+					Log.d(TAG, "### 配对失败！");
+				}
+			}
+
 		} catch (SecurityException e) {
 			e.printStackTrace();
 		} catch (NoSuchMethodException e) {
@@ -184,6 +285,9 @@ public class MainActivity extends Activity {
 		} catch (InvocationTargetException e) {
 			e.printStackTrace();
 		} catch (IOException e) {
+			e.printStackTrace();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
@@ -215,13 +319,26 @@ public class MainActivity extends Activity {
 				} else {
 					setTitle("");
 				}
-			}
-			if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(intent
+			} else if("android.bluetooth.device.action.PAIRING_REQUEST".equals(intent.getAction())) {
+				BluetoothDevice d = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE); 
+				 try {
+					 boolean setPin = ClsUtils.setPin(d.getClass(), d, "0000");
+					 Log.d(TAG, "### setPin = " + setPin);
+					 boolean createBoud = ClsUtils.createBond(d.getClass(), d);
+					 Log.d(TAG, "### createBoud = " + createBoud);
+					 device = d;
+					 boolean canclePare = ClsUtils.cancelPairingUserInput(d.getClass(), d);
+					 Log.d(TAG, "### canclePare = " + canclePare);
+				} catch (Exception e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} // 手机和蓝牙采集器配对
+
+			}else if (BluetoothAdapter.ACTION_DISCOVERY_STARTED.equals(intent
 					.getAction())) {
 				sb.append("### start discovery...\n");
 				textView.setText(sb.toString());
-			}
-			if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(intent
+			} else if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(intent
 					.getAction())) {
 				device = intent
 						.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
@@ -235,6 +352,7 @@ public class MainActivity extends Activity {
 					sb.append("### paired!");
 					textView.setText(sb.toString());
 					Log.d(TAG, "配对完成。");
+					//connect();
 					break;
 				case BluetoothDevice.BOND_NONE:
 					sb.append("### cancle pair!\n");
@@ -244,8 +362,7 @@ public class MainActivity extends Activity {
 				default:
 					break;
 				}
-			}
-			if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent
+			} else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(intent
 					.getAction())) {
 				sb.append("### start discovery  over...\n");
 				textView.setText(sb.toString());
@@ -253,7 +370,7 @@ public class MainActivity extends Activity {
 				textView.setText(sb.toString());
 				if (loopSearchFlag) {
 					bluetoothAdapter.cancelDiscovery();
-					handler.postDelayed(DiscoveryTask, 1000);
+					handler.postDelayed(DiscoveryTask, 10000);
 				}
 			}
 		}
