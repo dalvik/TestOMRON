@@ -1,4 +1,4 @@
 TestOMRON
 =========
 
-OMRON test project
+This OMRON test project!
